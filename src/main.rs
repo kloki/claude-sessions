@@ -21,6 +21,8 @@ enum Command {
     Clear,
     /// Output Waybar-compatible JSON
     Waybar,
+    /// List sessions in terminal-friendly format
+    Ps,
 }
 
 #[derive(Deserialize)]
@@ -52,13 +54,13 @@ fn process_webhook() -> anyhow::Result<()> {
         };
         if let Some(title) = hook.transcript_path.as_deref().and_then(read_custom_title) {
             session.name = Some(title);
-        } else if session.name.is_none() {
-            if let Some(ref cwd) = hook.cwd {
-                session.name = std::path::Path::new(cwd)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(str::to_string);
-            }
+        } else if session.name.is_none()
+            && let Some(ref cwd) = hook.cwd
+        {
+            session.name = std::path::Path::new(cwd)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string);
         }
     }
 
@@ -124,12 +126,42 @@ fn waybar() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn ps() -> anyhow::Result<()> {
+    let mut store = SessionStore::load()?;
+    store.cleanup_stale();
+    store.save()?;
+
+    if store.sessions.is_empty() {
+        println!("No active sessions");
+        return Ok(());
+    }
+
+    let mut entries: Vec<(&str, String)> = store
+        .sessions
+        .iter()
+        .map(|(id, s)| {
+            let label = s
+                .name
+                .as_deref()
+                .unwrap_or_else(|| if id.len() > 8 { &id[..8] } else { id });
+            (label, format!("{} {}", s.state.label(), label))
+        })
+        .collect();
+    entries.sort_by_key(|(name, _)| *name);
+    for (_, line) in entries {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::ProcessWebhook => process_webhook(),
         Command::Clear => SessionStore::clear().map_err(Into::into),
         Command::Waybar => waybar(),
+        Command::Ps => ps(),
     };
     if let Err(e) = result {
         eprintln!("Error: {e}");

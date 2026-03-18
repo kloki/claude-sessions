@@ -70,6 +70,15 @@ Add to your Claude Code `settings.json`:
 }
 ```
 
+## Commands
+
+| Command           | Description                                      |
+| ----------------- | ------------------------------------------------ |
+| `process-webhook` | Process a hook event from Claude (reads stdin)   |
+| `ps`              | List active sessions in terminal-friendly format |
+| `waybar`          | Output Waybar-compatible JSON                    |
+| `clear`           | Clear all session state                          |
+
 ## Waybar
 
 Add this to your `config.jsonc`
