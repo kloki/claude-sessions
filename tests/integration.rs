@@ -10,24 +10,23 @@ fn cmd(home: &std::path::Path) -> Command {
     cmd
 }
 
-fn send_event(home: &Path, session_id: &str, event: &str) {
-    let input = serde_json::json!({
+fn send_event(
+    home: &Path,
+    session_id: &str,
+    event: &str,
+    cwd: Option<&str>,
+    transcript_path: Option<&str>,
+) {
+    let mut input = serde_json::json!({
         "session_id": session_id,
         "hook_event_name": event,
     });
-    cmd(home)
-        .arg("process-webhook")
-        .write_stdin(input.to_string())
-        .assert()
-        .success();
-}
-
-fn send_event_with_cwd(home: &Path, session_id: &str, event: &str, cwd: &str) {
-    let input = serde_json::json!({
-        "session_id": session_id,
-        "hook_event_name": event,
-        "cwd": cwd,
-    });
+    if let Some(cwd) = cwd {
+        input["cwd"] = serde_json::Value::String(cwd.to_string());
+    }
+    if let Some(tp) = transcript_path {
+        input["transcript_path"] = serde_json::Value::String(tp.to_string());
+    }
     cmd(home)
         .arg("process-webhook")
         .write_stdin(input.to_string())
@@ -55,7 +54,7 @@ fn waybar_output(home: &std::path::Path) -> Value {
 #[test]
 fn session_start_creates_idle_session() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "Idle");
@@ -64,8 +63,8 @@ fn session_start_creates_idle_session() {
 #[test]
 fn session_end_removes_session() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "SessionEnd");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "SessionEnd", None, None);
 
     let store = read_store(home.path());
     assert!(store["sessions"]["sess-1"].is_null());
@@ -74,8 +73,8 @@ fn session_end_removes_session() {
 #[test]
 fn stop_marks_idle() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "Stop");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "Stop", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "Idle");
@@ -84,8 +83,8 @@ fn stop_marks_idle() {
 #[test]
 fn notification_marks_waiting_for_input() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "Notification");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "Notification", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "WaitingForInput");
@@ -94,9 +93,9 @@ fn notification_marks_waiting_for_input() {
 #[test]
 fn user_prompt_submit_marks_active() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "Notification");
-    send_event(home.path(), "sess-1", "UserPromptSubmit");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "Notification", None, None);
+    send_event(home.path(), "sess-1", "UserPromptSubmit", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "Active");
@@ -106,7 +105,7 @@ fn user_prompt_submit_marks_active() {
 fn upsert_creates_session_on_missed_start() {
     let home = TempDir::new().unwrap();
     // Skip SessionStart, go straight to Stop
-    send_event(home.path(), "sess-1", "Stop");
+    send_event(home.path(), "sess-1", "Stop", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "Idle");
@@ -116,7 +115,7 @@ fn upsert_creates_session_on_missed_start() {
 #[test]
 fn clear_removes_state_file() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
     assert!(home.path().join(".claude_sessions").exists());
 
     cmd(home.path()).arg("clear").assert().success();
@@ -141,9 +140,9 @@ fn waybar_empty_store() {
 #[test]
 fn waybar_counts_all_sessions() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-2", "SessionStart");
-    send_event(home.path(), "sess-2", "Stop");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-2", "SessionStart", None, None);
+    send_event(home.path(), "sess-2", "Stop", None, None);
 
     let out = waybar_output(home.path());
     assert_eq!(out["text"], "2");
@@ -152,9 +151,9 @@ fn waybar_counts_all_sessions() {
 #[test]
 fn waybar_class_waiting_takes_priority() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-2", "SessionStart");
-    send_event(home.path(), "sess-2", "Notification");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-2", "SessionStart", None, None);
+    send_event(home.path(), "sess-2", "Notification", None, None);
 
     let out = waybar_output(home.path());
     assert_eq!(out["class"], "claude-waiting");
@@ -163,9 +162,9 @@ fn waybar_class_waiting_takes_priority() {
 #[test]
 fn waybar_class_idle_over_active() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "UserPromptSubmit");
-    send_event(home.path(), "sess-2", "SessionStart");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "UserPromptSubmit", None, None);
+    send_event(home.path(), "sess-2", "SessionStart", None, None);
 
     let out = waybar_output(home.path());
     assert_eq!(out["class"], "claude-idle");
@@ -174,8 +173,8 @@ fn waybar_class_idle_over_active() {
 #[test]
 fn waybar_class_idle_when_all_idle() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "Stop");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "Stop", None, None);
 
     let out = waybar_output(home.path());
     assert_eq!(out["class"], "claude-idle");
@@ -184,7 +183,13 @@ fn waybar_class_idle_when_all_idle() {
 #[test]
 fn waybar_tooltip_truncates_long_ids() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "abcdefghij-long-id", "SessionStart");
+    send_event(
+        home.path(),
+        "abcdefghij-long-id",
+        "SessionStart",
+        None,
+        None,
+    );
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
@@ -195,7 +200,7 @@ fn waybar_tooltip_truncates_long_ids() {
 #[test]
 fn waybar_tooltip_keeps_short_ids() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "short", "SessionStart");
+    send_event(home.path(), "short", "SessionStart", None, None);
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
@@ -206,7 +211,7 @@ fn waybar_tooltip_keeps_short_ids() {
 fn waybar_cleans_stale_sessions() {
     let home = TempDir::new().unwrap();
     // Create a session, then manually backdate its updated_at
-    send_event(home.path(), "old-sess", "SessionStart");
+    send_event(home.path(), "old-sess", "SessionStart", None, None);
 
     let path = home.path().join(".claude_sessions");
     let contents = fs::read_to_string(&path).unwrap();
@@ -225,24 +230,24 @@ fn waybar_cleans_stale_sessions() {
 fn multiple_sessions_full_lifecycle() {
     let home = TempDir::new().unwrap();
 
-    send_event(home.path(), "s1", "SessionStart");
-    send_event(home.path(), "s2", "SessionStart");
-    send_event(home.path(), "s3", "SessionStart");
+    send_event(home.path(), "s1", "SessionStart", None, None);
+    send_event(home.path(), "s2", "SessionStart", None, None);
+    send_event(home.path(), "s3", "SessionStart", None, None);
 
     let out = waybar_output(home.path());
     assert_eq!(out["text"], "3");
 
-    send_event(home.path(), "s1", "Notification");
-    send_event(home.path(), "s2", "Stop");
+    send_event(home.path(), "s1", "Notification", None, None);
+    send_event(home.path(), "s2", "Stop", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["s1"]["state"], "WaitingForInput");
     assert_eq!(store["sessions"]["s2"]["state"], "Idle");
     assert_eq!(store["sessions"]["s3"]["state"], "Idle");
 
-    send_event(home.path(), "s1", "UserPromptSubmit");
-    send_event(home.path(), "s2", "SessionEnd");
-    send_event(home.path(), "s3", "SessionEnd");
+    send_event(home.path(), "s1", "UserPromptSubmit", None, None);
+    send_event(home.path(), "s2", "SessionEnd", None, None);
+    send_event(home.path(), "s3", "SessionEnd", None, None);
 
     let out = waybar_output(home.path());
     assert_eq!(out["text"], "1");
@@ -284,16 +289,13 @@ fn tooltip_shows_custom_title_from_jsonl() {
     });
     fs::write(&jsonl_path, format!("{}\n", entry)).unwrap();
 
-    let input = serde_json::json!({
-        "session_id": session_id,
-        "hook_event_name": "SessionStart",
-        "transcript_path": jsonl_path.to_str().unwrap(),
-    });
-    cmd(home.path())
-        .arg("process-webhook")
-        .write_stdin(input.to_string())
-        .assert()
-        .success();
+    send_event(
+        home.path(),
+        session_id,
+        "SessionStart",
+        None,
+        Some(jsonl_path.to_str().unwrap()),
+    );
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
@@ -306,11 +308,12 @@ fn tooltip_shows_custom_title_from_jsonl() {
 #[test]
 fn tooltip_uses_cwd_last_component_when_no_title() {
     let home = TempDir::new().unwrap();
-    send_event_with_cwd(
+    send_event(
         home.path(),
         "cwd-sess",
         "SessionStart",
-        "/home/koen/repos/myproject",
+        Some("/home/koen/repos/myproject"),
+        None,
     );
 
     let out = waybar_output(home.path());
@@ -324,7 +327,7 @@ fn tooltip_uses_cwd_last_component_when_no_title() {
 #[test]
 fn tooltip_falls_back_to_id_when_no_name_or_cwd() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "abcdefghijklmn", "SessionStart");
+    send_event(home.path(), "abcdefghijklmn", "SessionStart", None, None);
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
@@ -360,7 +363,7 @@ fn process_webhook_ignores_extra_fields() {
 #[test]
 fn unknown_event_defaults_to_active() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SomeNewEvent");
+    send_event(home.path(), "sess-1", "SomeNewEvent", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "Active");
@@ -369,8 +372,8 @@ fn unknown_event_defaults_to_active() {
 #[test]
 fn permission_request_marks_waiting_for_input() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "PermissionRequest");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "PermissionRequest", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "WaitingForInput");
@@ -379,9 +382,9 @@ fn permission_request_marks_waiting_for_input() {
 #[test]
 fn pre_tool_use_restores_active_after_permission() {
     let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart");
-    send_event(home.path(), "sess-1", "PermissionRequest");
-    send_event(home.path(), "sess-1", "PreToolUse");
+    send_event(home.path(), "sess-1", "SessionStart", None, None);
+    send_event(home.path(), "sess-1", "PermissionRequest", None, None);
+    send_event(home.path(), "sess-1", "PreToolUse", None, None);
 
     let store = read_store(home.path());
     assert_eq!(store["sessions"]["sess-1"]["state"], "Active");

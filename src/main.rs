@@ -74,20 +74,8 @@ struct WaybarOutput {
     class: String,
 }
 
-fn waybar() -> anyhow::Result<()> {
-    let mut store = SessionStore::load()?;
-    store.cleanup_stale();
-    store.save()?;
-
-    let count = store.sessions.len();
-    let tooltip = store
-        .sorted_sessions()
-        .iter()
-        .map(|(id, s)| format!("{}: {}", s.state.label(), s.display_name(id)))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let class = if store
+fn waybar_class(store: &SessionStore) -> &'static str {
+    if store
         .sessions
         .values()
         .any(|s| s.state == SessionState::WaitingForInput)
@@ -103,12 +91,24 @@ fn waybar() -> anyhow::Result<()> {
         "claude-active"
     } else {
         "claude-empty"
-    };
+    }
+}
+
+fn waybar() -> anyhow::Result<()> {
+    let store = SessionStore::load_and_cleanup()?;
+
+    let count = store.sessions.len();
+    let tooltip = store
+        .sorted_sessions()
+        .iter()
+        .map(|(id, s)| format!("{}: {}", s.state.label(), s.display_name(id)))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let output = WaybarOutput {
         text: count.to_string(),
         tooltip,
-        class: class.to_string(),
+        class: waybar_class(&store).to_string(),
     };
 
     println!("{}", serde_json::to_string(&output)?);
@@ -116,9 +116,7 @@ fn waybar() -> anyhow::Result<()> {
 }
 
 fn ps() -> anyhow::Result<()> {
-    let mut store = SessionStore::load()?;
-    store.cleanup_stale();
-    store.save()?;
+    let store = SessionStore::load_and_cleanup()?;
 
     if store.sessions.is_empty() {
         println!("No active sessions");
@@ -136,7 +134,7 @@ fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::ProcessWebhook => process_webhook(),
-        Command::Clear => SessionStore::clear().map_err(Into::into),
+        Command::Clear => SessionStore::clear(),
         Command::Waybar => waybar(),
         Command::Ps => ps(),
     };

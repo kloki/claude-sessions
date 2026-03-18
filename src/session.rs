@@ -1,5 +1,6 @@
-use std::{collections::HashMap, fs, io, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -49,11 +50,17 @@ fn state_file_path() -> PathBuf {
     PathBuf::from(home).join(".claude_sessions")
 }
 
+const ID_DISPLAY_LEN: usize = 8;
+
 impl Session {
     pub fn display_name<'a>(&'a self, id: &'a str) -> &'a str {
-        self.name
-            .as_deref()
-            .unwrap_or_else(|| if id.len() > 8 { &id[..8] } else { id })
+        self.name.as_deref().unwrap_or_else(|| {
+            if id.len() > ID_DISPLAY_LEN {
+                &id[..ID_DISPLAY_LEN]
+            } else {
+                id
+            }
+        })
     }
 }
 
@@ -68,16 +75,23 @@ impl SessionStore {
         v
     }
 
-    pub fn load() -> io::Result<Self> {
+    pub fn load() -> anyhow::Result<Self> {
         let path = state_file_path();
         if !path.exists() {
             return Ok(Self::default());
         }
-        let contents = fs::read_to_string(&path)?;
-        serde_json::from_str(&contents).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        let contents = fs::read_to_string(&path).context("reading session store")?;
+        serde_json::from_str(&contents).context("parsing session store")
     }
 
-    pub fn save(&self) -> io::Result<()> {
+    pub fn load_and_cleanup() -> anyhow::Result<Self> {
+        let mut store = Self::load()?;
+        store.cleanup_stale();
+        store.save()?;
+        Ok(store)
+    }
+
+    pub fn save(&self) -> anyhow::Result<()> {
         let path = state_file_path();
         let tmp = path.with_extension("tmp");
         let contents = serde_json::to_string_pretty(self)?;
@@ -86,7 +100,7 @@ impl SessionStore {
         Ok(())
     }
 
-    pub fn clear() -> io::Result<()> {
+    pub fn clear() -> anyhow::Result<()> {
         let path = state_file_path();
         if path.exists() {
             fs::remove_file(&path)?;
