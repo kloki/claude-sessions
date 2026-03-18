@@ -199,7 +199,7 @@ fn waybar_tooltip_keeps_short_ids() {
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(tooltip.contains("■ short  —  Idle"));
+    assert!(tooltip.contains("[Idle]       : short"));
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn tooltip_shows_custom_title_from_jsonl() {
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
     assert!(
-        tooltip.contains("■ my-label  —  Idle"),
+        tooltip.contains("[Idle]       : my-label"),
         "tooltip was: {tooltip}"
     );
 }
@@ -316,7 +316,7 @@ fn tooltip_uses_cwd_last_component_when_no_title() {
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
     assert!(
-        tooltip.contains("■ myproject  —  Idle"),
+        tooltip.contains("[Idle]       : myproject"),
         "tooltip was: {tooltip}"
     );
 }
@@ -329,7 +329,7 @@ fn tooltip_falls_back_to_id_when_no_name_or_cwd() {
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
     assert!(
-        tooltip.contains("■ abcdefgh  —  Idle"),
+        tooltip.contains("[Idle]       : abcdefgh"),
         "tooltip was: {tooltip}"
     );
     assert!(

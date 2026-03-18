@@ -12,11 +12,11 @@ pub enum SessionState {
 }
 
 impl SessionState {
-    pub fn icon(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
-            SessionState::Active => "▶",
-            SessionState::Idle => "■",
-            SessionState::WaitingForInput => "⏸",
+            SessionState::Active => "[Thinking]   ",
+            SessionState::Idle => "[Idle]       ",
+            SessionState::WaitingForInput => "[Needs input]",
         }
     }
 }

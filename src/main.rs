@@ -79,7 +79,7 @@ fn waybar() -> anyhow::Result<()> {
     store.save()?;
 
     let count = store.sessions.len();
-    let mut tooltip_lines: Vec<String> = store
+    let mut entries: Vec<(&str, String)> = store
         .sessions
         .iter()
         .map(|(id, s)| {
@@ -87,11 +87,15 @@ fn waybar() -> anyhow::Result<()> {
                 .name
                 .as_deref()
                 .unwrap_or_else(|| if id.len() > 8 { &id[..8] } else { id });
-            format!("{} {}  —  {}", s.state.icon(), label, s.state)
+            (label, format!("{}: {}", s.state.label(), label))
         })
         .collect();
-    tooltip_lines.sort();
-    let tooltip = tooltip_lines.join("\n");
+    entries.sort_by_key(|(name, _)| *name);
+    let tooltip = entries
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let class = if store
         .sessions
