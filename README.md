@@ -1,14 +1,20 @@
-# Claude Sessions Tracker
+# claude-sessions
 
-A Rust CLI tool that tracks Claude Code sessions via hooks and exposes a Waybar widget.
+A Claude Code session tracker module for [waybar](https://github.com/Alexays/Waybar) that works for me.
 
-## Install
+# Install
 
-```sh
-cargo install --path .
+```bash
+cargo install claude-sessions
 ```
 
-## Claude hooks configuration
+## Binaries
+
+Check [Releases](https://github.com/kloki/claude-sessions/releases) for binaries and installers
+
+# Configure
+
+## Claude hooks
 
 Add to your Claude Code `settings.json`:
 
@@ -54,28 +60,16 @@ Add to your Claude Code `settings.json`:
 }
 ```
 
-## Waybar configuration
+## Waybar
 
-Add to your Waybar config:
+Add this to your `config.jsonc`
 
 ```json
 {
-  "custom/claude": {
-    "exec": "claude-sessions waybar",
+  "custom/claude-sessions": {
+    "exec": "~/.cargo/bin/claude-sessions waybar",
     "return-type": "json",
     "interval": 5
   }
 }
 ```
-
-The widget outputs:
-
-- **text**: count of all sessions
-- **tooltip**: each session ID (truncated) and its state
-- **class**: `waiting` if any session needs input, `active` if any are active, `idle` otherwise
-
-## CLI commands
-
-- `claude-sessions process-webhook` — reads hook JSON from stdin, updates session state
-- `claude-sessions waybar` — outputs Waybar-compatible JSON
-- `claude-sessions clear` — removes session state file
