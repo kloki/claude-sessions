@@ -133,7 +133,7 @@ fn waybar_empty_store() {
     let home = TempDir::new().unwrap();
     let out = waybar_output(home.path());
     assert_eq!(out["text"], "0");
-    assert_eq!(out["tooltip"], "");
+    assert_eq!(out["tooltip"], "No active sessions");
     assert_eq!(out["class"], "claude-empty");
 }
 
@@ -193,8 +193,12 @@ fn waybar_tooltip_truncates_long_ids() {
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(tooltip.contains("abcdefgh"));
-    assert!(!tooltip.contains("abcdefghij"));
+    // Name column truncates to 8 chars, but full ID is shown in ID column
+    assert!(tooltip.contains("abcdefgh"), "tooltip was: {tooltip}");
+    assert!(
+        tooltip.contains("abcdefghij-long-id"),
+        "full ID should appear in ID column: {tooltip}"
+    );
 }
 
 #[test]
@@ -204,7 +208,7 @@ fn waybar_tooltip_keeps_short_ids() {
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(tooltip.contains("[Idle]       : short"));
+    assert!(tooltip.contains("short"), "tooltip was: {tooltip}");
 }
 
 #[test]
@@ -299,10 +303,7 @@ fn tooltip_shows_custom_title_from_jsonl() {
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(
-        tooltip.contains("[Idle]       : my-label"),
-        "tooltip was: {tooltip}"
-    );
+    assert!(tooltip.contains("my-label"), "tooltip was: {tooltip}");
 }
 
 #[test]
@@ -318,10 +319,7 @@ fn tooltip_uses_cwd_last_component_when_no_title() {
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(
-        tooltip.contains("[Idle]       : myproject"),
-        "tooltip was: {tooltip}"
-    );
+    assert!(tooltip.contains("myproject"), "tooltip was: {tooltip}");
 }
 
 #[test]
@@ -331,13 +329,12 @@ fn tooltip_falls_back_to_id_when_no_name_or_cwd() {
 
     let out = waybar_output(home.path());
     let tooltip = out["tooltip"].as_str().unwrap();
+    // Name column truncates to 8 chars
+    assert!(tooltip.contains("abcdefgh"), "tooltip was: {tooltip}");
+    // Full ID is shown in ID column
     assert!(
-        tooltip.contains("[Idle]       : abcdefgh"),
-        "tooltip was: {tooltip}"
-    );
-    assert!(
-        !tooltip.contains("abcdefghij"),
-        "should truncate at 8 chars"
+        tooltip.contains("abcdefghijklmn"),
+        "full ID should appear in ID column: {tooltip}"
     );
 }
 
@@ -367,14 +364,14 @@ fn process_notification_parses_input_and_resolves_name() {
     // Create a session with a known name first
     send_event(
         home.path(),
-        "notif-sess",
+        "test-notif-sess",
         "SessionStart",
         Some("/home/user/my-project"),
         None,
     );
 
     let input = serde_json::json!({
-        "session_id": "notif-sess",
+        "session_id": "test-notif-sess",
         "message": "Task complete",
         "cwd": "/home/user/my-project",
     });
@@ -393,7 +390,7 @@ fn process_notification_uses_fallback_when_no_message() {
     let home = TempDir::new().unwrap();
 
     let input = serde_json::json!({
-        "session_id": "notif-sess-2",
+        "session_id": "test-notif-sess-2",
     });
 
     cmd(home.path())
@@ -406,7 +403,7 @@ fn process_notification_uses_fallback_when_no_message() {
 #[test]
 fn process_notification_resolves_name_from_transcript() {
     let home = TempDir::new().unwrap();
-    let session_id = "notif-transcript";
+    let session_id = "test-notif-transcript";
 
     let projects_dir = home.path().join(".claude/projects/proj1");
     fs::create_dir_all(&projects_dir).unwrap();

@@ -15,9 +15,9 @@ pub enum SessionState {
 impl SessionState {
     pub fn label(&self) -> &'static str {
         match self {
-            SessionState::Active => "[Thinking]   ",
-            SessionState::Idle => "[Idle]       ",
-            SessionState::WaitingForInput => "[Needs input]",
+            SessionState::Active => "Thinking",
+            SessionState::Idle => "Idle",
+            SessionState::WaitingForInput => "Needs input",
         }
     }
 }

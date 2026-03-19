@@ -99,7 +99,7 @@ Add this to your `config.jsonc`
 }
 ```
 
-## Styling
+### Styling
 
 The module sets a CSS class based on the state of your sessions. Add to your `style.css`:
 
@@ -119,12 +119,8 @@ The module sets a CSS class based on the state of your sessions. Add to your `st
 #custom-claude-sessions.claude-waiting {
   color: #f38ba8; /* Claude is waiting for your input */
 }
+
+#custom-claude-sessions.claude-empty {
+  color: #f38ba8; /* Claude is waiting for your input */
+}
 ```
-
-The classes are mutually exclusive and follow this priority:
-
-| Class            | Meaning                                   |
-| ---------------- | ----------------------------------------- |
-| `claude-waiting` | At least one session is waiting for input |
-| `claude-active`  | At least one session is actively thinking |
-| `claude-idle`    | All sessions are idle                     |

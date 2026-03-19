@@ -1,4 +1,7 @@
-use crate::session::{SessionState, SessionStore};
+use crate::{
+    format_ps,
+    session::{SessionState, SessionStore},
+};
 
 #[derive(serde::Serialize)]
 struct WaybarOutput {
@@ -30,17 +33,12 @@ fn waybar_class(store: &SessionStore) -> &'static str {
 pub fn waybar() -> anyhow::Result<()> {
     let store = SessionStore::load_and_cleanup()?;
 
-    let count = store.sessions.len();
-    let tooltip = store
-        .sorted_sessions()
-        .iter()
-        .map(|(id, s)| format!("{}: {}", s.state.label(), s.display_name(id)))
-        .collect::<Vec<_>>()
-        .join("\n");
-
     let output = WaybarOutput {
-        text: count.to_string(),
-        tooltip,
+        text: store.sessions.len().to_string(),
+        tooltip: format!(
+            "<span font_family='monospace' font_size='small'>{}</span>",
+            format_ps(&store, false)
+        ),
         class: waybar_class(&store).to_string(),
     };
 

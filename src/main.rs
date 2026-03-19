@@ -126,26 +126,63 @@ fn format_age(dt: chrono::DateTime<chrono::Utc>) -> String {
     }
 }
 
+pub fn format_ps(store: &SessionStore, show_id: bool) -> String {
+    if store.sessions.is_empty() {
+        return "No active sessions".to_string();
+    }
+
+    let sessions = store.sorted_sessions();
+    let name_width = sessions
+        .iter()
+        .map(|(id, s)| s.display_name(id).len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let state_width = sessions
+        .iter()
+        .map(|(_, s)| s.state.label().len())
+        .max()
+        .unwrap_or(5)
+        .max(5);
+
+    let mut lines = Vec::with_capacity(sessions.len() + 1);
+    if show_id {
+        lines.push(format!(
+            "{:<state_width$}  {:<name_width$}  {:<36}  {:>10}  {:>10}",
+            "STATE", "NAME", "ID", "STARTED", "UPDATED",
+        ));
+    } else {
+        lines.push(format!(
+            "{:<state_width$}  {:<name_width$}  {:>10}  {:>10}",
+            "STATE", "NAME", "STARTED", "UPDATED",
+        ));
+    }
+    for (id, s) in &sessions {
+        if show_id {
+            lines.push(format!(
+                "{:<state_width$}  {:<name_width$}  {:<36}  {:>10}  {:>10}",
+                s.state.label(),
+                s.display_name(id),
+                id,
+                format_age(s.started_at),
+                format_age(s.updated_at),
+            ));
+        } else {
+            lines.push(format!(
+                "{:<state_width$}  {:<name_width$}  {:>10}  {:>10}",
+                s.state.label(),
+                s.display_name(id),
+                format_age(s.started_at),
+                format_age(s.updated_at),
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
 fn ps() -> anyhow::Result<()> {
     let store = SessionStore::load_and_cleanup()?;
-
-    if store.sessions.is_empty() {
-        println!("No active sessions");
-        return Ok(());
-    }
-
-    for (id, s) in store.sorted_sessions() {
-        let short_id = &id[..id.len().min(8)];
-        println!(
-            "{} {}  [{}]  started: {}  updated: {}",
-            s.state.label(),
-            s.display_name(id),
-            short_id,
-            format_age(s.started_at),
-            format_age(s.updated_at),
-        );
-    }
-
+    println!("{}", format_ps(&store, true));
     Ok(())
 }
 
