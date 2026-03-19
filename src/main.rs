@@ -1,4 +1,5 @@
 mod session;
+mod waybar;
 
 use std::io::Read;
 
@@ -114,54 +115,6 @@ fn process_hook() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct WaybarOutput {
-    text: String,
-    tooltip: String,
-    class: String,
-}
-
-fn waybar_class(store: &SessionStore) -> &'static str {
-    if store
-        .sessions
-        .values()
-        .any(|s| s.state == SessionState::WaitingForInput)
-    {
-        "claude-waiting"
-    } else if store
-        .sessions
-        .values()
-        .any(|s| s.state == SessionState::Idle)
-    {
-        "claude-idle"
-    } else if !store.sessions.is_empty() {
-        "claude-active"
-    } else {
-        "claude-empty"
-    }
-}
-
-fn waybar() -> anyhow::Result<()> {
-    let store = SessionStore::load_and_cleanup()?;
-
-    let count = store.sessions.len();
-    let tooltip = store
-        .sorted_sessions()
-        .iter()
-        .map(|(id, s)| format!("{}: {}", s.state.label(), s.display_name(id)))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let output = WaybarOutput {
-        text: count.to_string(),
-        tooltip,
-        class: waybar_class(&store).to_string(),
-    };
-
-    println!("{}", serde_json::to_string(&output)?);
-    Ok(())
-}
-
 fn format_age(dt: chrono::DateTime<chrono::Utc>) -> String {
     let dur = chrono::Utc::now() - dt;
     if dur.num_hours() >= 1 {
@@ -230,7 +183,7 @@ fn main() {
         Command::ProcessHook => process_hook(),
         Command::ProcessNotification => process_notification(),
         Command::Clear => SessionStore::clear(),
-        Command::Waybar => waybar(),
+        Command::Waybar => waybar::waybar(),
         Command::Ps => ps(),
         Command::Json => json(),
     };
