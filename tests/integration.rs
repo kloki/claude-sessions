@@ -379,7 +379,7 @@ fn process_notification_parses_input_and_resolves_name() {
         home.path(),
         "test-notif-sess",
         "SessionStart",
-        Some("/home/user/my-project"),
+        Some("/home/user/integration-test"),
         None,
         None,
     );
@@ -387,7 +387,7 @@ fn process_notification_parses_input_and_resolves_name() {
     let input = serde_json::json!({
         "session_id": "test-notif-sess",
         "message": "Task complete",
-        "cwd": "/home/user/my-project",
+        "cwd": "/home/user/integration-test",
     });
 
     // notify-send may not exist in CI, but the command should still succeed
@@ -402,6 +402,16 @@ fn process_notification_parses_input_and_resolves_name() {
 #[test]
 fn process_notification_uses_fallback_when_no_message() {
     let home = TempDir::new().unwrap();
+
+    // Create a session so the notification name resolves to "integration-test"
+    send_event(
+        home.path(),
+        "test-notif-sess-2",
+        "SessionStart",
+        Some("/tmp/integration-test"),
+        None,
+        None,
+    );
 
     let input = serde_json::json!({
         "session_id": "test-notif-sess-2",
@@ -424,7 +434,7 @@ fn process_notification_resolves_name_from_transcript() {
     let jsonl_path = projects_dir.join(format!("{session_id}.jsonl"));
     let entry = serde_json::json!({
         "type": "custom-title",
-        "customTitle": "my-notification-label",
+        "customTitle": "integration-test-label",
         "sessionId": session_id,
     });
     fs::write(&jsonl_path, format!("{}\n", entry)).unwrap();
