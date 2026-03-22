@@ -53,7 +53,7 @@ pub struct SessionStore {
     pub sessions: HashMap<String, Session>,
 }
 
-fn state_file_path() -> PathBuf {
+pub fn state_file_path() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME not set");
     PathBuf::from(home).join(".claude_sessions")
 }

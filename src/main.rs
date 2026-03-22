@@ -1,6 +1,7 @@
 mod hooks;
 mod output;
 mod session;
+mod watch;
 mod waybar;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -27,6 +28,8 @@ enum Command {
     Ps,
     /// Output sessions as a JSON array
     Json,
+    /// Live-updating session monitor
+    Watch,
     /// Generate shell completions
     Completions {
         /// The shell to generate completions for
@@ -43,6 +46,7 @@ fn main() {
         Command::Waybar => waybar::waybar(),
         Command::Ps => output::ps(),
         Command::Json => output::json(),
+        Command::Watch => watch::watch(),
         Command::Completions { shell } => {
             clap_complete::generate(
                 shell,
