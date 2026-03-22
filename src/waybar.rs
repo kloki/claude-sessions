@@ -35,10 +35,7 @@ pub fn waybar() -> anyhow::Result<()> {
 
     let output = WaybarOutput {
         text: store.sessions.len().to_string(),
-        tooltip: format!(
-            "<span font_family='monospace' font_size='small'>{}</span>",
-            format_ps(&store, false)
-        ),
+        tooltip: format_ps(&store, false),
         class: waybar_class(&store).to_string(),
     };
 
