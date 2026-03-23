@@ -1,6 +1,18 @@
 # claude-sessions
 
-A Claude Code session tracker module for [waybar](https://github.com/Alexays/Waybar) that works for me.
+It's `ps` for your Claude Code sessions. Track what your agents are up to with a terminal command, a live TUI, or a Waybar widget.
+
+## Commands
+
+| Command                | Description                                              |
+| ---------------------- | -------------------------------------------------------- |
+| `ps`                   | List active sessions in terminal-friendly format         |
+| `watch`                | Live-updating TUI that monitors session changes          |
+| `waybar`               | Output Waybar-compatible JSON                            |
+| `json`                 | Output sessions as a JSON array                          |
+| `process-hook`         | Process a hook event from Claude (reads stdin)           |
+| `process-notification` | Send a desktop notification via `notify-send` for a hook |
+| `clear`                | Clear all session state                                  |
 
 # Install
 
@@ -9,6 +21,8 @@ A Claude Code session tracker module for [waybar](https://github.com/Alexays/Way
 Check [Releases](https://github.com/kloki/claude-sessions/releases) for binaries and installers
 
 # Configure
+
+claude-sessionss works by processing the hooks provided by claude code.
 
 ## Claude hooks
 
@@ -74,18 +88,7 @@ Add to your Claude Code `settings.json`:
 }
 ```
 
-## Commands
-
-| Command                | Description                                              |
-| ---------------------- | -------------------------------------------------------- |
-| `process-hook`         | Process a hook event from Claude (reads stdin)           |
-| `process-notification` | Send a desktop notification via `notify-send` for a hook |
-| `ps`                   | List active sessions in terminal-friendly format         |
-| `waybar`               | Output Waybar-compatible JSON                            |
-| `json`                 | Output sessions as a JSON array                          |
-| `clear`                | Clear all session state                                  |
-
-## Waybar
+## Waybar widget
 
 Add this to your `config.jsonc`
 
