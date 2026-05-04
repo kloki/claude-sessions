@@ -42,7 +42,7 @@ fn main() {
     let result = match cli.command {
         Command::ProcessHook => hooks::process_hook(),
         Command::ProcessNotification => hooks::process_notification(),
-        Command::Clear => session::SessionStore::clear(),
+        Command::Clear => output::clear(),
         Command::Waybar => waybar::waybar(),
         Command::Ps => output::ps(),
         Command::Json => output::json(),

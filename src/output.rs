@@ -111,6 +111,18 @@ pub fn format_ps(store: &SessionStore, show_id: bool, max_name_width: Option<usi
     lines.join("\n")
 }
 
+pub fn clear() -> anyhow::Result<()> {
+    let store = SessionStore::load_and_cleanup()?;
+    if store.sessions.is_empty() {
+        println!("No sessions to clear");
+    } else {
+        println!("Clearing {} session(s):", store.sessions.len());
+        println!("{}", format_ps(&store, true, None));
+    }
+    SessionStore::clear()?;
+    Ok(())
+}
+
 pub fn ps() -> anyhow::Result<()> {
     let store = SessionStore::load_and_cleanup()?;
     println!("{}", format_ps(&store, true, None));
