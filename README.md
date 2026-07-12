@@ -1,6 +1,6 @@
 # claude-sessions
 
-A Claude Code session tracker module for [waybar](https://github.com/Alexays/Waybar) that works for me.
+It's `ps` for your Claude Code sessions. Track what your agents are up to with a terminal command or a Waybar widget.
 
 It reads Claude Code's own session registry (`~/.claude/sessions/<pid>.json`)
 directly — no hooks, no custom state file, nothing to keep in sync. Sessions
@@ -56,7 +56,7 @@ session. Add to your Claude Code `settings.json`:
 }
 ```
 
-# Waybar
+# Waybar widget
 
 Add this to your `config.jsonc`
 
