@@ -1,7 +1,12 @@
-use crate::session::SessionStore;
+use chrono::{DateTime, Utc};
 
-fn format_age(dt: chrono::DateTime<chrono::Utc>) -> String {
-    let dur = chrono::Utc::now() - dt;
+use crate::session::{self, Session};
+
+fn format_age(dt: Option<DateTime<Utc>>) -> String {
+    let Some(dt) = dt else {
+        return "-".to_string();
+    };
+    let dur = Utc::now() - dt;
     if dur.num_hours() >= 1 {
         format!("{}h{}m ago", dur.num_hours(), dur.num_minutes() % 60)
     } else if dur.num_minutes() >= 1 {
@@ -20,42 +25,32 @@ fn display_project(path: &str) -> String {
     }
 }
 
-pub fn format_ps(store: &SessionStore, show_id: bool, max_name_width: Option<usize>) -> String {
-    if store.sessions.is_empty() {
+pub fn format_ps(sessions: &[Session], show_id: bool, max_name_width: Option<usize>) -> String {
+    if sessions.is_empty() {
         return "No active sessions".to_string();
     }
 
-    let groups = store.grouped_sessions();
+    let groups = session::grouped_sessions(sessions);
 
-    let all_sessions: Vec<_> = groups
+    let mut name_width = sessions
         .iter()
-        .flat_map(|(_, sessions)| sessions.iter())
-        .collect();
-    let mut name_width = all_sessions
-        .iter()
-        .map(|(id, s)| s.display_name(id).len())
+        .map(|s| s.display_name().len())
         .max()
         .unwrap_or(4)
         .max(4);
     if let Some(max) = max_name_width {
         name_width = name_width.min(max);
     }
-    let state_width = all_sessions
+    let status_width = sessions
         .iter()
-        .map(|(_, s)| s.state.label().len())
+        .map(|s| s.status_display().len())
         .max()
-        .unwrap_or(5)
-        .max(5);
-    let mode_width = all_sessions
-        .iter()
-        .map(|(_, s)| s.permission_mode.as_deref().unwrap_or("").len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
+        .unwrap_or(6)
+        .max(6);
 
     let mut lines = Vec::new();
 
-    for (i, (project, sessions)) in groups.iter().enumerate() {
+    for (i, (project, group)) in groups.iter().enumerate() {
         if i > 0 {
             lines.push(String::new());
         }
@@ -68,19 +63,18 @@ pub fn format_ps(store: &SessionStore, show_id: bool, max_name_width: Option<usi
 
         if show_id {
             lines.push(format!(
-                "  {:<state_width$}  {:<name_width$}  {:<mode_width$}  {:<36}  {:>10}  {:>10}",
-                "STATE", "NAME", "MODE", "ID", "STARTED", "UPDATED",
+                "  {:<status_width$}  {:<name_width$}  {:<36}  {:>10}  {:>10}",
+                "STATE", "NAME", "SESSION", "STARTED", "UPDATED",
             ));
         } else {
             lines.push(format!(
-                "  {:<state_width$}  {:<name_width$}  {:<mode_width$}  {:>10}  {:>10}",
-                "STATE", "NAME", "MODE", "STARTED", "UPDATED",
+                "  {:<status_width$}  {:<name_width$}  {:>10}  {:>10}",
+                "STATE", "NAME", "STARTED", "UPDATED",
             ));
         }
 
-        for (id, s) in sessions {
-            let mode = s.permission_mode.as_deref().unwrap_or("");
-            let name = s.display_name(id);
+        for s in group {
+            let name = s.display_name();
             let name = if name.len() > name_width {
                 &name[..name_width]
             } else {
@@ -88,22 +82,20 @@ pub fn format_ps(store: &SessionStore, show_id: bool, max_name_width: Option<usi
             };
             if show_id {
                 lines.push(format!(
-                    "  {:<state_width$}  {:<name_width$}  {:<mode_width$}  {:<36}  {:>10}  {:>10}",
-                    s.state.label(),
+                    "  {:<status_width$}  {:<name_width$}  {:<36}  {:>10}  {:>10}",
+                    s.status_display(),
                     name,
-                    mode,
-                    id,
-                    format_age(s.started_at),
-                    format_age(s.updated_at),
+                    s.session_id,
+                    format_age(s.started_at()),
+                    format_age(s.updated_at()),
                 ));
             } else {
                 lines.push(format!(
-                    "  {:<state_width$}  {:<name_width$}  {:<mode_width$}  {:>10}  {:>10}",
-                    s.state.label(),
+                    "  {:<status_width$}  {:<name_width$}  {:>10}  {:>10}",
+                    s.status_display(),
                     name,
-                    mode,
-                    format_age(s.started_at),
-                    format_age(s.updated_at),
+                    format_age(s.started_at()),
+                    format_age(s.updated_at()),
                 ));
             }
         }
@@ -111,40 +103,44 @@ pub fn format_ps(store: &SessionStore, show_id: bool, max_name_width: Option<usi
     lines.join("\n")
 }
 
-pub fn ps() -> anyhow::Result<()> {
-    let store = SessionStore::load_and_cleanup()?;
-    println!("{}", format_ps(&store, true, None));
+pub fn ps_human() -> anyhow::Result<()> {
+    let sessions = session::load_sessions();
+    println!("{}", format_ps(&sessions, true, None));
     Ok(())
 }
 
 #[derive(serde::Serialize)]
 struct JsonSession {
+    pid: u32,
     id: String,
     name: String,
     state: String,
-    started_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    project: Option<String>,
-    permission_mode: Option<String>,
+    /// Raw status from Claude Code: busy | shell | idle | waiting.
+    status: String,
+    waiting_for: Option<String>,
+    cwd: Option<String>,
+    started_at: Option<DateTime<Utc>>,
+    updated_at: Option<DateTime<Utc>>,
 }
 
-pub fn json() -> anyhow::Result<()> {
-    let store = SessionStore::load_and_cleanup()?;
+pub fn ps_json() -> anyhow::Result<()> {
+    let sessions = session::load_sessions();
 
-    let sessions: Vec<JsonSession> = store
-        .sorted_sessions()
+    let out: Vec<JsonSession> = sessions
         .iter()
-        .map(|(id, s)| JsonSession {
-            id: id.to_string(),
-            name: s.display_name(id).to_string(),
-            state: s.state.to_string(),
-            started_at: s.started_at,
-            updated_at: s.updated_at,
-            project: s.project.clone(),
-            permission_mode: s.permission_mode.clone(),
+        .map(|s| JsonSession {
+            pid: s.pid,
+            id: s.session_id.clone(),
+            name: s.display_name().to_string(),
+            state: s.state().label().to_string(),
+            status: s.status.clone(),
+            waiting_for: s.waiting_for.clone(),
+            cwd: s.cwd.clone(),
+            started_at: s.started_at(),
+            updated_at: s.updated_at(),
         })
         .collect();
 
-    println!("{}", serde_json::to_string(&sessions)?);
+    println!("{}", serde_json::to_string(&out)?);
     Ok(())
 }

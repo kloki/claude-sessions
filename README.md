@@ -2,71 +2,53 @@
 
 A Claude Code session tracker module for [waybar](https://github.com/Alexays/Waybar) that works for me.
 
+It reads Claude Code's own session registry (`~/.claude/sessions/<pid>.json`)
+directly — no hooks, no custom state file, nothing to keep in sync. Sessions
+whose process is no longer running are ignored automatically.
+
 # Install
 
 ## Binaries
 
 Check [Releases](https://github.com/kloki/claude-sessions/releases) for binaries and installers
 
-# Configure
+# Commands
 
-## Claude hooks
+| Command                | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| `ps`                   | List active sessions in a terminal-friendly table              |
+| `ps --format json`     | List active sessions as a JSON array                           |
+| `waybar`               | Output Waybar-compatible JSON                                  |
+| `process-notification` | Send a desktop notification via `notify-send` for a hook event |
+| `completions <shell>`  | Generate shell completions                                     |
 
-Add to your Claude Code `settings.json`:
+Session state is derived from Claude Code's own status field:
+
+| Claude status    | Shown as        | Waybar class     |
+| ---------------- | --------------- | ---------------- |
+| `busy` / `shell` | `Working`       | `claude-active`  |
+| `idle`           | `Idle`          | `claude-idle`    |
+| `waiting`        | `Needs input`\* | `claude-waiting` |
+
+\* When Claude is waiting, the reason it reports (`permission prompt`,
+`input needed`, `sandbox request`, …) is shown alongside.
+
+# Notifications (optional)
+
+`process-notification` is the only piece that uses a hook. It turns a
+`Notification` hook event into a readable `notify-send` bubble, deduplicated per
+session. Add to your Claude Code `settings.json`:
 
 ```json
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-sessions process-hook" }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-sessions process-hook" }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-sessions process-hook" }
-        ]
-      }
-    ],
     "Notification": [
       {
         "hooks": [
-          { "type": "command", "command": "claude-sessions process-hook" },
           {
             "type": "command",
             "command": "claude-sessions process-notification"
           }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-sessions process-hook" }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-sessions process-hook" }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-sessions process-hook" }
         ]
       }
     ]
@@ -74,18 +56,7 @@ Add to your Claude Code `settings.json`:
 }
 ```
 
-## Commands
-
-| Command                | Description                                              |
-| ---------------------- | -------------------------------------------------------- |
-| `process-hook`         | Process a hook event from Claude (reads stdin)           |
-| `process-notification` | Send a desktop notification via `notify-send` for a hook |
-| `ps`                   | List active sessions in terminal-friendly format         |
-| `waybar`               | Output Waybar-compatible JSON                            |
-| `json`                 | Output sessions as a JSON array                          |
-| `clear`                | Clear all session state                                  |
-
-## Waybar
+# Waybar
 
 Add this to your `config.jsonc`
 

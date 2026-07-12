@@ -1,6 +1,6 @@
 use crate::{
     output::format_ps,
-    session::{SessionState, SessionStore},
+    session::{self, Session, SessionState},
 };
 
 #[derive(serde::Serialize)]
@@ -10,20 +10,13 @@ struct WaybarOutput {
     class: String,
 }
 
-fn waybar_class(store: &SessionStore) -> &'static str {
-    if store
-        .sessions
-        .values()
-        .any(|s| s.state == SessionState::WaitingForInput)
-    {
+fn waybar_class(sessions: &[Session]) -> &'static str {
+    let has = |state: SessionState| sessions.iter().any(|s| s.state() == state);
+    if has(SessionState::WaitingForInput) {
         "claude-waiting"
-    } else if store
-        .sessions
-        .values()
-        .any(|s| s.state == SessionState::Idle)
-    {
+    } else if has(SessionState::Idle) {
         "claude-idle"
-    } else if !store.sessions.is_empty() {
+    } else if !sessions.is_empty() {
         "claude-active"
     } else {
         "claude-empty"
@@ -31,12 +24,12 @@ fn waybar_class(store: &SessionStore) -> &'static str {
 }
 
 pub fn waybar() -> anyhow::Result<()> {
-    let store = SessionStore::load_and_cleanup()?;
+    let sessions = session::load_sessions();
 
     let output = WaybarOutput {
-        text: store.sessions.len().to_string(),
-        tooltip: format_ps(&store, false, Some(12)),
-        class: waybar_class(&store).to_string(),
+        text: sessions.len().to_string(),
+        tooltip: format_ps(&sessions, false, Some(12)),
+        class: waybar_class(&sessions).to_string(),
     };
 
     println!("{}", serde_json::to_string(&output)?);

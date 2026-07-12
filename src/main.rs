@@ -1,10 +1,9 @@
 mod hooks;
 mod output;
 mod session;
-mod watch;
 mod waybar;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
 #[derive(Parser)]
@@ -14,22 +13,24 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Clone, ValueEnum)]
+enum Format {
+    Human,
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Command {
-    /// Process a hook event from Claude hooks (reads JSON from stdin)
-    ProcessHook,
-    /// Process a notification hook and send a desktop notification via notify-send
+    /// Send a desktop notification via notify-send (reads a hook event from stdin)
     ProcessNotification,
-    /// Clear all session state
-    Clear,
     /// Output Waybar-compatible JSON
     Waybar,
-    /// List sessions in terminal-friendly format
-    Ps,
-    /// Output sessions as a JSON array
-    Json,
-    /// Live-updating session monitor
-    Watch,
+    /// List active sessions
+    Ps {
+        /// Output format
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
+    },
     /// Generate shell completions
     Completions {
         /// The shell to generate completions for
@@ -40,13 +41,12 @@ enum Command {
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::ProcessHook => hooks::process_hook(),
         Command::ProcessNotification => hooks::process_notification(),
-        Command::Clear => session::SessionStore::clear(),
         Command::Waybar => waybar::waybar(),
-        Command::Ps => output::ps(),
-        Command::Json => output::json(),
-        Command::Watch => watch::watch(),
+        Command::Ps { format } => match format {
+            Format::Human => output::ps_human(),
+            Format::Json => output::ps_json(),
+        },
         Command::Completions { shell } => {
             clap_complete::generate(
                 shell,

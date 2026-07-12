@@ -1,398 +1,226 @@
 use std::{fs, path::Path};
 
 use assert_cmd::Command;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
-fn cmd(home: &std::path::Path) -> Command {
+/// A PID that is essentially guaranteed not to be running, so its registry file
+/// is treated as stale. Liveness is only enforced on Linux (via /proc).
+const DEAD_PID: u32 = 4_000_000_000;
+
+fn cmd(config_dir: &Path) -> Command {
     let mut cmd = Command::cargo_bin("claude-sessions").unwrap();
-    cmd.env("HOME", home);
+    cmd.env("CLAUDE_CONFIG_DIR", config_dir);
     cmd
 }
 
-fn send_event(
-    home: &Path,
-    session_id: &str,
-    event: &str,
-    cwd: Option<&str>,
-    transcript_path: Option<&str>,
-    permission_mode: Option<&str>,
-) {
-    let mut input = serde_json::json!({
-        "session_id": session_id,
-        "hook_event_name": event,
+/// Write a session registry file the way Claude Code does, at
+/// `<config>/sessions/<pid>.json`. Defaults to the current (alive) process pid.
+fn write_session(config_dir: &Path, session_id: &str, status: &str, extra: Value) {
+    let dir = config_dir.join("sessions");
+    fs::create_dir_all(&dir).unwrap();
+
+    let mut entry = json!({
+        "pid": std::process::id(),
+        "sessionId": session_id,
+        "kind": "interactive",
+        "entrypoint": "cli",
+        "status": status,
+        "startedAt": 1_700_000_000_000i64,
+        "statusUpdatedAt": 1_700_000_000_000i64,
+        "updatedAt": 1_700_000_000_000i64,
     });
-    if let Some(cwd) = cwd {
-        input["cwd"] = serde_json::Value::String(cwd.to_string());
+    if let Value::Object(fields) = extra {
+        for (k, v) in fields {
+            entry[k] = v;
+        }
     }
-    if let Some(tp) = transcript_path {
-        input["transcript_path"] = serde_json::Value::String(tp.to_string());
-    }
-    if let Some(mode) = permission_mode {
-        input["permission_mode"] = serde_json::Value::String(mode.to_string());
-    }
-    cmd(home)
-        .arg("process-hook")
-        .write_stdin(input.to_string())
+
+    let path = dir.join(format!("{}.json", entry["pid"]));
+    fs::write(path, entry.to_string()).unwrap();
+}
+
+fn ps_json(config_dir: &Path) -> Value {
+    let out = cmd(config_dir)
+        .args(["ps", "--format", "json"])
         .assert()
-        .success();
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    serde_json::from_slice(&out).unwrap()
 }
 
-fn read_store(home: &std::path::Path) -> Value {
-    let path = home.join(".claude_sessions");
-    let contents = fs::read_to_string(path).unwrap();
-    serde_json::from_str(&contents).unwrap()
+fn ps_human(config_dir: &Path) -> String {
+    let out = cmd(config_dir)
+        .arg("ps")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    String::from_utf8(out).unwrap()
 }
 
-fn waybar_output(home: &std::path::Path) -> Value {
-    let output = cmd(home)
+fn waybar_output(config_dir: &Path) -> Value {
+    let out = cmd(config_dir)
         .arg("waybar")
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
-    serde_json::from_slice(&output).unwrap()
+    serde_json::from_slice(&out).unwrap()
 }
 
 #[test]
-fn session_start_creates_idle_session() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "Idle");
+fn ps_json_empty_when_no_registry() {
+    let dir = TempDir::new().unwrap();
+    let sessions = ps_json(dir.path());
+    assert_eq!(sessions.as_array().unwrap().len(), 0);
 }
 
 #[test]
-fn session_end_removes_session() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "SessionEnd", None, None, None);
+fn ps_json_reports_state_from_status() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "busy-sess", "busy", Value::Null);
 
-    let store = read_store(home.path());
-    assert!(store["sessions"]["sess-1"].is_null());
+    let sessions = ps_json(dir.path());
+    let arr = sessions.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["status"], "busy");
+    assert_eq!(arr[0]["state"], "Working");
 }
 
 #[test]
-fn stop_marks_idle() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "Stop", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "Idle");
+fn ps_json_idle_state() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "idle-sess", "idle", Value::Null);
+    let arr = ps_json(dir.path());
+    assert_eq!(arr[0]["state"], "Idle");
 }
 
 #[test]
-fn notification_marks_waiting_for_input() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "Notification", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "WaitingForInput");
+fn ps_json_waiting_state_carries_reason() {
+    let dir = TempDir::new().unwrap();
+    write_session(
+        dir.path(),
+        "wait-sess",
+        "waiting",
+        json!({ "waitingFor": "permission prompt" }),
+    );
+    let arr = ps_json(dir.path());
+    assert_eq!(arr[0]["state"], "Needs input");
+    assert_eq!(arr[0]["waiting_for"], "permission prompt");
 }
 
 #[test]
-fn user_prompt_submit_marks_active() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "Notification", None, None, None);
-    send_event(home.path(), "sess-1", "UserPromptSubmit", None, None, None);
+fn ps_json_shell_counts_as_working() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "shell-sess", "shell", Value::Null);
+    let arr = ps_json(dir.path());
+    assert_eq!(arr[0]["state"], "Working");
+}
 
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "Active");
+#[cfg(target_os = "linux")]
+#[test]
+fn dead_sessions_are_filtered() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "dead-sess", "idle", json!({ "pid": DEAD_PID }));
+    let arr = ps_json(dir.path());
+    assert_eq!(arr.as_array().unwrap().len(), 0);
 }
 
 #[test]
-fn upsert_creates_session_on_missed_start() {
-    let home = TempDir::new().unwrap();
-    // Skip SessionStart, go straight to Stop
-    send_event(home.path(), "sess-1", "Stop", None, None, None);
+fn ps_human_shows_project_and_status() {
+    let dir = TempDir::new().unwrap();
+    write_session(
+        dir.path(),
+        "sess-1",
+        "waiting",
+        json!({ "cwd": "/home/user/repos/myproject", "waitingFor": "input needed" }),
+    );
 
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "Idle");
-    assert!(store["sessions"]["sess-1"]["started_at"].is_string());
+    let ps = ps_human(dir.path());
+    assert!(ps.contains("/home/user/repos/myproject"), "ps was: {ps}");
+    assert!(ps.contains("Needs input"), "ps was: {ps}");
+    assert!(ps.contains("input needed"), "ps was: {ps}");
 }
 
 #[test]
-fn clear_removes_state_file() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    assert!(home.path().join(".claude_sessions").exists());
-
-    cmd(home.path()).arg("clear").assert().success();
-    assert!(!home.path().join(".claude_sessions").exists());
+fn ps_human_uses_name_then_cwd_then_id() {
+    let dir = TempDir::new().unwrap();
+    // Explicit name wins.
+    write_session(dir.path(), "sess-1", "idle", json!({ "name": "my-label" }));
+    let ps = ps_human(dir.path());
+    assert!(ps.contains("my-label"), "ps was: {ps}");
 }
 
 #[test]
-fn clear_succeeds_when_no_state_file() {
-    let home = TempDir::new().unwrap();
-    cmd(home.path()).arg("clear").assert().success();
+fn ps_human_unknown_group_without_cwd() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "sess-1", "idle", Value::Null);
+    let ps = ps_human(dir.path());
+    assert!(ps.contains("Unknown"), "ps was: {ps}");
 }
 
 #[test]
-fn waybar_empty_store() {
-    let home = TempDir::new().unwrap();
-    let out = waybar_output(home.path());
+fn waybar_empty_registry() {
+    let dir = TempDir::new().unwrap();
+    let out = waybar_output(dir.path());
     assert_eq!(out["text"], "0");
     assert_eq!(out["tooltip"], "No active sessions");
     assert_eq!(out["class"], "claude-empty");
 }
 
 #[test]
-fn waybar_counts_all_sessions() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-2", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-2", "Stop", None, None, None);
-
-    let out = waybar_output(home.path());
-    assert_eq!(out["text"], "2");
-}
-
-#[test]
-fn waybar_class_waiting_takes_priority() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-2", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-2", "Notification", None, None, None);
-
-    let out = waybar_output(home.path());
-    assert_eq!(out["class"], "claude-waiting");
-}
-
-#[test]
-fn waybar_class_idle_over_active() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "UserPromptSubmit", None, None, None);
-    send_event(home.path(), "sess-2", "SessionStart", None, None, None);
-
-    let out = waybar_output(home.path());
-    assert_eq!(out["class"], "claude-idle");
-}
-
-#[test]
-fn waybar_class_idle_when_all_idle() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "Stop", None, None, None);
-
-    let out = waybar_output(home.path());
-    assert_eq!(out["class"], "claude-idle");
-}
-
-#[test]
-fn waybar_tooltip_truncates_long_ids() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "abcdefghij-long-id",
-        "SessionStart",
-        None,
-        None,
-        None,
-    );
-
-    let out = waybar_output(home.path());
-    let tooltip = out["tooltip"].as_str().unwrap();
-    // Waybar tooltip doesn't show ID column; name column truncates to 8 chars
-    assert!(tooltip.contains("abcdefgh"), "tooltip was: {tooltip}");
-    assert!(
-        !tooltip.contains("abcdefghij-long-id"),
-        "full ID should not appear in waybar tooltip (no ID column): {tooltip}"
-    );
-}
-
-#[test]
-fn waybar_tooltip_keeps_short_ids() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "short", "SessionStart", None, None, None);
-
-    let out = waybar_output(home.path());
-    let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(tooltip.contains("short"), "tooltip was: {tooltip}");
-}
-
-#[test]
-fn waybar_cleans_stale_sessions() {
-    let home = TempDir::new().unwrap();
-    // Create a session, then manually backdate its updated_at
-    send_event(home.path(), "old-sess", "SessionStart", None, None, None);
-
-    let path = home.path().join(".claude_sessions");
-    let contents = fs::read_to_string(&path).unwrap();
-    let mut store: Value = serde_json::from_str(&contents).unwrap();
-
-    // Set updated_at to 25 hours ago
-    let old_time = chrono::Utc::now() - chrono::Duration::hours(25);
-    store["sessions"]["old-sess"]["updated_at"] = Value::String(old_time.to_rfc3339());
-    fs::write(&path, serde_json::to_string_pretty(&store).unwrap()).unwrap();
-
-    let out = waybar_output(home.path());
-    assert_eq!(out["text"], "0");
-}
-
-#[test]
-fn multiple_sessions_full_lifecycle() {
-    let home = TempDir::new().unwrap();
-
-    send_event(home.path(), "s1", "SessionStart", None, None, None);
-    send_event(home.path(), "s2", "SessionStart", None, None, None);
-    send_event(home.path(), "s3", "SessionStart", None, None, None);
-
-    let out = waybar_output(home.path());
-    assert_eq!(out["text"], "3");
-
-    send_event(home.path(), "s1", "Notification", None, None, None);
-    send_event(home.path(), "s2", "Stop", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["s1"]["state"], "WaitingForInput");
-    assert_eq!(store["sessions"]["s2"]["state"], "Idle");
-    assert_eq!(store["sessions"]["s3"]["state"], "Idle");
-
-    send_event(home.path(), "s1", "UserPromptSubmit", None, None, None);
-    send_event(home.path(), "s2", "SessionEnd", None, None, None);
-    send_event(home.path(), "s3", "SessionEnd", None, None, None);
-
-    let out = waybar_output(home.path());
+fn waybar_counts_and_classes_by_status() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "sess-1", "busy", Value::Null);
+    let out = waybar_output(dir.path());
     assert_eq!(out["text"], "1");
     assert_eq!(out["class"], "claude-active");
 }
 
 #[test]
-fn process_hook_rejects_invalid_json() {
-    let home = TempDir::new().unwrap();
-    cmd(home.path())
-        .arg("process-hook")
-        .write_stdin("not json")
-        .assert()
-        .failure();
+fn waybar_class_waiting_takes_priority() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "sess-1", "waiting", Value::Null);
+    let out = waybar_output(dir.path());
+    assert_eq!(out["class"], "claude-waiting");
 }
 
 #[test]
-fn process_hook_rejects_missing_fields() {
-    let home = TempDir::new().unwrap();
-    cmd(home.path())
-        .arg("process-hook")
-        .write_stdin(r#"{"session_id":"x"}"#)
-        .assert()
-        .failure();
+fn waybar_class_idle() {
+    let dir = TempDir::new().unwrap();
+    write_session(dir.path(), "sess-1", "idle", Value::Null);
+    let out = waybar_output(dir.path());
+    assert_eq!(out["class"], "claude-idle");
 }
 
 #[test]
-fn tooltip_shows_custom_title_from_jsonl() {
-    let home = TempDir::new().unwrap();
-    let session_id = "test-session-rename";
+fn ps_json_ignores_unparseable_files() {
+    let dir = TempDir::new().unwrap();
+    let sessions_dir = dir.path().join("sessions");
+    fs::create_dir_all(&sessions_dir).unwrap();
+    fs::write(sessions_dir.join("garbage.json"), "not json").unwrap();
+    fs::write(sessions_dir.join("note.txt"), "ignored").unwrap();
+    write_session(dir.path(), "sess-1", "busy", Value::Null);
 
-    let projects_dir = home.path().join(".claude/projects/proj1");
-    fs::create_dir_all(&projects_dir).unwrap();
-    let jsonl_path = projects_dir.join(format!("{session_id}.jsonl"));
-    let entry = serde_json::json!({
-        "type": "custom-title",
-        "customTitle": "my-label",
-        "sessionId": session_id,
-    });
-    fs::write(&jsonl_path, format!("{}\n", entry)).unwrap();
-
-    send_event(
-        home.path(),
-        session_id,
-        "SessionStart",
-        None,
-        Some(jsonl_path.to_str().unwrap()),
-        None,
-    );
-
-    let out = waybar_output(home.path());
-    let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(tooltip.contains("my-label"), "tooltip was: {tooltip}");
+    let arr = ps_json(dir.path());
+    assert_eq!(arr.as_array().unwrap().len(), 1);
 }
 
 #[test]
-fn tooltip_uses_cwd_last_component_when_no_title() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "cwd-sess",
-        "SessionStart",
-        Some("/home/koen/repos/myproject"),
-        None,
-        None,
-    );
-
-    let out = waybar_output(home.path());
-    let tooltip = out["tooltip"].as_str().unwrap();
-    assert!(tooltip.contains("myproject"), "tooltip was: {tooltip}");
-}
-
-#[test]
-fn tooltip_falls_back_to_id_when_no_name_or_cwd() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "abcdefghijklmn",
-        "SessionStart",
-        None,
-        None,
-        None,
-    );
-
-    let out = waybar_output(home.path());
-    let tooltip = out["tooltip"].as_str().unwrap();
-    // Waybar tooltip doesn't show ID column; name column truncates to 8 chars
-    assert!(tooltip.contains("abcdefgh"), "tooltip was: {tooltip}");
-    assert!(
-        !tooltip.contains("abcdefghijklmn"),
-        "full ID should not appear in waybar tooltip (no ID column): {tooltip}"
-    );
-}
-
-#[test]
-fn process_hook_ignores_extra_fields() {
-    let home = TempDir::new().unwrap();
-    let input = serde_json::json!({
-        "session_id": "sess-1",
-        "hook_event_name": "SessionStart",
-        "cwd": "/some/path",
-        "extra_field": 42,
-    });
-    cmd(home.path())
-        .arg("process-hook")
-        .write_stdin(input.to_string())
-        .assert()
-        .success();
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "Idle");
-}
-
-#[test]
-fn process_notification_parses_input_and_resolves_name() {
-    let home = TempDir::new().unwrap();
-
-    // Create a session with a known name first
-    send_event(
-        home.path(),
-        "test-notif-sess",
-        "SessionStart",
-        Some("/home/user/integration-test"),
-        None,
-        None,
-    );
-
-    let input = serde_json::json!({
-        "session_id": "test-notif-sess",
+fn process_notification_succeeds() {
+    let dir = TempDir::new().unwrap();
+    let input = json!({
+        "session_id": "notif-sess",
         "message": "Task complete",
         "cwd": "/home/user/integration-test",
     });
-
-    // notify-send may not exist in CI, but the command should still succeed
-    // (we .ok() the notify-send call)
-    cmd(home.path())
+    // notify-send may not exist in CI; the command .ok()s that call and still succeeds.
+    cmd(dir.path())
         .arg("process-notification")
         .write_stdin(input.to_string())
         .assert()
@@ -400,24 +228,10 @@ fn process_notification_parses_input_and_resolves_name() {
 }
 
 #[test]
-fn process_notification_uses_fallback_when_no_message() {
-    let home = TempDir::new().unwrap();
-
-    // Create a session so the notification name resolves to "integration-test"
-    send_event(
-        home.path(),
-        "test-notif-sess-2",
-        "SessionStart",
-        Some("/tmp/integration-test"),
-        None,
-        None,
-    );
-
-    let input = serde_json::json!({
-        "session_id": "test-notif-sess-2",
-    });
-
-    cmd(home.path())
+fn process_notification_fallback_when_no_message() {
+    let dir = TempDir::new().unwrap();
+    let input = json!({ "session_id": "notif-sess-2", "cwd": "/tmp/integration-test" });
+    cmd(dir.path())
         .arg("process-notification")
         .write_stdin(input.to_string())
         .assert()
@@ -425,27 +239,23 @@ fn process_notification_uses_fallback_when_no_message() {
 }
 
 #[test]
-fn process_notification_resolves_name_from_transcript() {
-    let home = TempDir::new().unwrap();
-    let session_id = "test-notif-transcript";
-
-    let projects_dir = home.path().join(".claude/projects/proj1");
-    fs::create_dir_all(&projects_dir).unwrap();
-    let jsonl_path = projects_dir.join(format!("{session_id}.jsonl"));
-    let entry = serde_json::json!({
+fn process_notification_resolves_custom_title() {
+    let dir = TempDir::new().unwrap();
+    let session_id = "notif-transcript";
+    let transcript = dir.path().join(format!("{session_id}.jsonl"));
+    let entry = json!({
         "type": "custom-title",
-        "customTitle": "integration-test-label",
+        "customTitle": "integration-label",
         "sessionId": session_id,
     });
-    fs::write(&jsonl_path, format!("{}\n", entry)).unwrap();
+    fs::write(&transcript, format!("{entry}\n")).unwrap();
 
-    let input = serde_json::json!({
+    let input = json!({
         "session_id": session_id,
         "message": "Done!",
-        "transcript_path": jsonl_path.to_str().unwrap(),
+        "transcript_path": transcript.to_str().unwrap(),
     });
-
-    cmd(home.path())
+    cmd(dir.path())
         .arg("process-notification")
         .write_stdin(input.to_string())
         .assert()
@@ -454,253 +264,10 @@ fn process_notification_resolves_name_from_transcript() {
 
 #[test]
 fn process_notification_rejects_invalid_json() {
-    let home = TempDir::new().unwrap();
-    cmd(home.path())
+    let dir = TempDir::new().unwrap();
+    cmd(dir.path())
         .arg("process-notification")
         .write_stdin("not json")
         .assert()
         .failure();
-}
-
-#[test]
-fn unknown_event_defaults_to_active() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SomeNewEvent", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "Active");
-}
-
-#[test]
-fn permission_request_marks_waiting_for_input() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "PermissionRequest", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "WaitingForInput");
-}
-
-#[test]
-fn pre_tool_use_restores_active_after_permission() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-    send_event(home.path(), "sess-1", "PermissionRequest", None, None, None);
-    send_event(home.path(), "sess-1", "PreToolUse", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["state"], "Active");
-}
-
-#[test]
-fn permission_mode_stored_when_present() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "sess-1",
-        "SessionStart",
-        None,
-        None,
-        Some("plan"),
-    );
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["permission_mode"], "plan");
-}
-
-#[test]
-fn permission_mode_not_cleared_when_absent() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "sess-1",
-        "SessionStart",
-        None,
-        None,
-        Some("plan"),
-    );
-    send_event(home.path(), "sess-1", "UserPromptSubmit", None, None, None);
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["permission_mode"], "plan");
-}
-
-#[test]
-fn permission_mode_updated_on_new_value() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "sess-1",
-        "SessionStart",
-        None,
-        None,
-        Some("plan"),
-    );
-    send_event(
-        home.path(),
-        "sess-1",
-        "UserPromptSubmit",
-        None,
-        None,
-        Some("default"),
-    );
-
-    let store = read_store(home.path());
-    assert_eq!(store["sessions"]["sess-1"]["permission_mode"], "default");
-}
-
-#[test]
-fn project_stored_from_cwd() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "sess-1",
-        "SessionStart",
-        Some("/home/user/repos/myproject"),
-        None,
-        None,
-    );
-
-    let store = read_store(home.path());
-    assert_eq!(
-        store["sessions"]["sess-1"]["project"],
-        "/home/user/repos/myproject"
-    );
-}
-
-#[test]
-fn project_not_overwritten_on_subsequent_events() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "sess-1",
-        "SessionStart",
-        Some("/home/user/repos/first"),
-        None,
-        None,
-    );
-    send_event(
-        home.path(),
-        "sess-1",
-        "UserPromptSubmit",
-        Some("/home/user/repos/second"),
-        None,
-        None,
-    );
-
-    let store = read_store(home.path());
-    assert_eq!(
-        store["sessions"]["sess-1"]["project"],
-        "/home/user/repos/first"
-    );
-}
-
-#[test]
-fn ps_groups_sessions_by_project() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "sess-1",
-        "SessionStart",
-        Some("/home/user/repos/alpha"),
-        None,
-        None,
-    );
-    send_event(
-        home.path(),
-        "sess-2",
-        "SessionStart",
-        Some("/home/user/repos/beta"),
-        None,
-        None,
-    );
-
-    let output = cmd(home.path())
-        .arg("ps")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let ps = String::from_utf8(output).unwrap();
-
-    // Both project headers should appear (HOME in tests is tmpdir, not /home/user)
-    assert!(ps.contains("/home/user/repos/alpha"), "ps was: {ps}");
-    assert!(ps.contains("/home/user/repos/beta"), "ps was: {ps}");
-    // Alpha should come before beta (alphabetical)
-    let alpha_pos = ps.find("/home/user/repos/alpha").unwrap();
-    let beta_pos = ps.find("/home/user/repos/beta").unwrap();
-    assert!(alpha_pos < beta_pos, "alpha should sort before beta");
-}
-
-#[test]
-fn ps_unknown_group_for_sessions_without_project() {
-    let home = TempDir::new().unwrap();
-    send_event(home.path(), "sess-1", "SessionStart", None, None, None);
-
-    let output = cmd(home.path())
-        .arg("ps")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let ps = String::from_utf8(output).unwrap();
-
-    assert!(ps.contains("Unknown"), "ps was: {ps}");
-}
-
-#[test]
-fn ps_shows_permission_mode() {
-    let home = TempDir::new().unwrap();
-    send_event(
-        home.path(),
-        "sess-1",
-        "SessionStart",
-        None,
-        None,
-        Some("plan"),
-    );
-
-    let output = cmd(home.path())
-        .arg("ps")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let ps = String::from_utf8(output).unwrap();
-
-    assert!(ps.contains("MODE"), "ps was: {ps}");
-    assert!(ps.contains("plan"), "ps was: {ps}");
-}
-
-#[test]
-fn old_state_file_loads_without_new_fields() {
-    let home = TempDir::new().unwrap();
-    let state = serde_json::json!({
-        "sessions": {
-            "sess-1": {
-                "state": "Idle",
-                "name": null,
-                "started_at": "2026-01-01T00:00:00Z",
-                "updated_at": chrono::Utc::now().to_rfc3339(),
-            }
-        }
-    });
-    let path = home.path().join(".claude_sessions");
-    fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
-
-    // Should load without error and show session
-    let output = cmd(home.path())
-        .arg("ps")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let ps = String::from_utf8(output).unwrap();
-
-    assert!(ps.contains("Unknown"), "ps was: {ps}");
-    assert!(ps.contains("sess-1"), "ps was: {ps}");
 }
